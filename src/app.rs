@@ -1,4 +1,5 @@
 use crate::swagger::{Operation, SwaggerSpec};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub struct Endpoint {
@@ -14,12 +15,23 @@ pub enum Panel {
     Detail,
 }
 
+#[derive(Debug, Clone)]
+pub enum SidebarItem {
+    Tag(String),
+    Endpoint(usize), // index into endpoints vec
+}
+
 pub struct App {
     pub spec: SwaggerSpec,
     pub endpoints: Vec<Endpoint>,
     pub filtered: Vec<usize>,
+    pub sidebar_items: Vec<SidebarItem>,
     pub selected: usize,
     pub scroll: u16,
+    pub detail_height: u16,
+    pub sidebar_scroll: u16,
+    pub sidebar_height: u16,
+    pub collapsed_tags: HashSet<String>,
     pub search: String,
     pub searching: bool,
     pub active_panel: Panel,
@@ -41,17 +53,24 @@ impl App {
             }
         }
         let filtered: Vec<usize> = (0..endpoints.len()).collect();
-        Self {
+        let mut app = Self {
             spec,
             endpoints,
             filtered,
+            sidebar_items: Vec::new(),
             selected: 0,
             scroll: 0,
+            detail_height: 0,
+            sidebar_scroll: 0,
+            sidebar_height: 0,
+            collapsed_tags: HashSet::new(),
             search: String::new(),
             searching: false,
             active_panel: Panel::Sidebar,
             quit: false,
-        }
+        };
+        app.rebuild_sidebar();
+        app
     }
 
     pub fn apply_filter(&mut self) {
@@ -76,29 +95,74 @@ impl App {
             })
             .map(|(i, _)| i)
             .collect();
-        if self.selected >= self.filtered.len() {
+        self.rebuild_sidebar();
+        if self.selected >= self.sidebar_items.len() {
             self.selected = 0;
         }
         self.scroll = 0;
     }
 
+    pub fn rebuild_sidebar(&mut self) {
+        self.sidebar_items.clear();
+        let mut current_tag = String::new();
+        for &idx in &self.filtered {
+            let ep = &self.endpoints[idx];
+            if ep.tag != current_tag {
+                current_tag = ep.tag.clone();
+                self.sidebar_items.push(SidebarItem::Tag(current_tag.clone()));
+            }
+            if !self.collapsed_tags.contains(&ep.tag) {
+                self.sidebar_items.push(SidebarItem::Endpoint(idx));
+            }
+        }
+    }
+
     pub fn selected_endpoint(&self) -> Option<&Endpoint> {
-        self.filtered
-            .get(self.selected)
-            .map(|&i| &self.endpoints[i])
+        match self.sidebar_items.get(self.selected) {
+            Some(SidebarItem::Endpoint(idx)) => Some(&self.endpoints[*idx]),
+            _ => None,
+        }
+    }
+
+    pub fn toggle_tag(&mut self) {
+        if let Some(SidebarItem::Tag(tag)) = self.sidebar_items.get(self.selected).cloned() {
+            if self.collapsed_tags.contains(&tag) {
+                self.collapsed_tags.remove(&tag);
+            } else {
+                self.collapsed_tags.insert(tag);
+            }
+            self.rebuild_sidebar();
+            if self.selected >= self.sidebar_items.len() {
+                self.selected = self.sidebar_items.len().saturating_sub(1);
+            }
+        }
     }
 
     pub fn next(&mut self) {
-        if !self.filtered.is_empty() {
-            self.selected = (self.selected + 1) % self.filtered.len();
+        if !self.sidebar_items.is_empty() {
+            self.selected = (self.selected + 1) % self.sidebar_items.len();
             self.scroll = 0;
+            self.adjust_sidebar_scroll();
         }
     }
 
     pub fn prev(&mut self) {
-        if !self.filtered.is_empty() {
-            self.selected = self.selected.checked_sub(1).unwrap_or(self.filtered.len() - 1);
+        if !self.sidebar_items.is_empty() {
+            self.selected = self.selected.checked_sub(1).unwrap_or(self.sidebar_items.len() - 1);
             self.scroll = 0;
+            self.adjust_sidebar_scroll();
+        }
+    }
+
+    pub fn adjust_sidebar_scroll(&mut self) {
+        if self.sidebar_height == 0 {
+            return;
+        }
+        let h = self.sidebar_height as usize;
+        if self.selected < self.sidebar_scroll as usize {
+            self.sidebar_scroll = self.selected as u16;
+        } else if self.selected >= self.sidebar_scroll as usize + h {
+            self.sidebar_scroll = (self.selected - h + 1) as u16;
         }
     }
 
@@ -108,5 +172,15 @@ impl App {
 
     pub fn scroll_up(&mut self) {
         self.scroll = self.scroll.saturating_sub(1);
+    }
+
+    pub fn page_down(&mut self) {
+        let step = self.detail_height.max(1);
+        self.scroll = self.scroll.saturating_add(step);
+    }
+
+    pub fn page_up(&mut self) {
+        let step = self.detail_height.max(1);
+        self.scroll = self.scroll.saturating_sub(step);
     }
 }

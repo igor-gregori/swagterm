@@ -1,4 +1,5 @@
-use crate::app::{App, Endpoint, Panel};
+use crate::app::{App, Endpoint, Panel, SidebarItem};
+use crate::swagger::Schema;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -6,6 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
+use std::collections::HashMap;
 
 fn method_color(method: &str) -> Color {
     match method {
@@ -18,7 +20,7 @@ fn method_color(method: &str) -> Color {
     }
 }
 
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)])
@@ -52,7 +54,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     );
 }
 
-fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
+fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
     let border_style = if app.active_panel == Panel::Sidebar {
         Style::default().fg(Color::Cyan)
     } else {
@@ -64,58 +66,79 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(border_style);
 
+    app.sidebar_height = area.height.saturating_sub(2);
+
     let mut lines: Vec<Line> = Vec::new();
-    let mut current_tag = String::new();
 
-    for (i, &idx) in app.filtered.iter().enumerate() {
-        let ep = &app.endpoints[idx];
-        if ep.tag != current_tag {
-            current_tag = ep.tag.clone();
-            lines.push(Line::from(Span::styled(
-                format!("▼ {current_tag}"),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-            )));
+    for (i, item) in app.sidebar_items.iter().enumerate() {
+        let is_selected = i == app.selected;
+        match item {
+            SidebarItem::Tag(tag) => {
+                let arrow = if app.collapsed_tags.contains(tag) { "▶" } else { "▼" };
+                let style = if is_selected {
+                    Style::default().fg(Color::White).bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                };
+                lines.push(Line::from(Span::styled(format!("{arrow} {tag}"), style)));
+            }
+            SidebarItem::Endpoint(idx) => {
+                let ep = &app.endpoints[*idx];
+                let style = if is_selected {
+                    Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                let method_span = Span::styled(
+                    format!("{:>6}", ep.method),
+                    Style::default().fg(method_color(&ep.method)),
+                );
+                let path_span = Span::styled(format!(" {}", ep.path), style);
+                lines.push(Line::from(vec![method_span, path_span]));
+            }
         }
-
-        let style = if i == app.selected {
-            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
-
-        let method_span = Span::styled(
-            format!("{:>6}", ep.method),
-            Style::default().fg(method_color(&ep.method)),
-        );
-        let path_span = Span::styled(format!(" {}", ep.path), style);
-        lines.push(Line::from(vec![method_span, path_span]));
     }
 
-    let paragraph = Paragraph::new(lines).block(block);
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .scroll((app.sidebar_scroll, 0));
     f.render_widget(paragraph, area);
 }
 
-fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
+fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
     let border_style = if app.active_panel == Panel::Detail {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default().fg(Color::DarkGray)
     };
 
-    let block = Block::default()
-        .title(" Detail ")
-        .borders(Borders::ALL)
-        .border_style(border_style);
+    app.detail_height = area.height.saturating_sub(2);
 
     let Some(ep) = app.selected_endpoint() else {
+        let block = Block::default()
+            .title(" Detail ")
+            .borders(Borders::ALL)
+            .border_style(border_style);
         f.render_widget(Paragraph::new("No endpoint selected").block(block), area);
         return;
     };
 
     let mut lines: Vec<Line> = Vec::new();
     add_operation_header(&mut lines, ep);
-    add_parameters_section(&mut lines, ep);
-    add_responses_section(&mut lines, ep);
+    add_parameters_section(&mut lines, ep, &app.spec.definitions);
+    add_responses_section(&mut lines, ep, &app.spec.definitions);
+
+    let total_lines = lines.len() as u16;
+    let scroll_info = if total_lines > app.detail_height {
+        format!(" Detail [{}/{}] ", app.scroll + 1, total_lines.saturating_sub(app.detail_height) + 1)
+    } else {
+        " Detail ".into()
+    };
+
+    let block = Block::default()
+        .title(scroll_info)
+        .borders(Borders::ALL)
+        .border_style(border_style);
 
     let paragraph = Paragraph::new(lines)
         .block(block)
@@ -138,6 +161,13 @@ fn add_operation_header(lines: &mut Vec<Line<'static>>, ep: &Endpoint) {
             Style::default().add_modifier(Modifier::BOLD),
         ),
     ]));
+
+    if let Some(op_id) = &ep.operation.operation_id {
+        lines.push(Line::from(Span::styled(
+            format!("operationId: {op_id}"),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
     lines.push(Line::from(""));
 
     if let Some(summary) = &ep.operation.summary {
@@ -153,9 +183,25 @@ fn add_operation_header(lines: &mut Vec<Line<'static>>, ep: &Endpoint) {
         )));
     }
     lines.push(Line::from(""));
+
+    if !ep.operation.consumes.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("Consumes: ", Style::default().fg(Color::Yellow)),
+            Span::raw(ep.operation.consumes.join(", ")),
+        ]));
+    }
+    if !ep.operation.produces.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("Produces: ", Style::default().fg(Color::Yellow)),
+            Span::raw(ep.operation.produces.join(", ")),
+        ]));
+    }
+    if !ep.operation.consumes.is_empty() || !ep.operation.produces.is_empty() {
+        lines.push(Line::from(""));
+    }
 }
 
-fn add_parameters_section(lines: &mut Vec<Line<'static>>, ep: &Endpoint) {
+fn add_parameters_section(lines: &mut Vec<Line<'static>>, ep: &Endpoint, definitions: &HashMap<String, Schema>) {
     if ep.operation.parameters.is_empty() {
         return;
     }
@@ -190,11 +236,17 @@ fn add_parameters_section(lines: &mut Vec<Line<'static>>, ep: &Endpoint) {
                 Style::default().fg(Color::DarkGray),
             )));
         }
+        // Show schema for body parameters
+        if p.location == "body" {
+            if let Some(schema) = &p.schema {
+                render_schema(lines, schema, definitions, 2, 4);
+            }
+        }
     }
     lines.push(Line::from(""));
 }
 
-fn add_responses_section(lines: &mut Vec<Line<'static>>, ep: &Endpoint) {
+fn add_responses_section(lines: &mut Vec<Line<'static>>, ep: &Endpoint, definitions: &HashMap<String, Schema>) {
     if ep.operation.responses.is_empty() {
         return;
     }
@@ -221,6 +273,120 @@ fn add_responses_section(lines: &mut Vec<Line<'static>>, ep: &Endpoint) {
             Span::styled(format!("  {code} "), Style::default().fg(color).add_modifier(Modifier::BOLD)),
             Span::raw(desc),
         ]));
+        if let Some(schema) = &resp.schema {
+            render_schema(lines, schema, definitions, 2, 4);
+        }
     }
     lines.push(Line::from(""));
+}
+
+fn render_schema(
+    lines: &mut Vec<Line<'static>>,
+    schema: &Schema,
+    definitions: &HashMap<String, Schema>,
+    indent: usize,
+    max_depth: usize,
+) {
+    if indent > max_depth {
+        let pad = " ".repeat(indent * 2);
+        lines.push(Line::from(Span::styled(
+            format!("{pad}..."),
+            Style::default().fg(Color::DarkGray),
+        )));
+        return;
+    }
+
+    // Handle $ref
+    if let Some(ref_path) = &schema.reference {
+        let ref_name = ref_path.strip_prefix("#/definitions/").unwrap_or(ref_path);
+        if let Some(resolved) = definitions.get(ref_name) {
+            let pad = " ".repeat(indent * 2);
+            lines.push(Line::from(Span::styled(
+                format!("{pad}{ref_name} {{"),
+                Style::default().fg(Color::Magenta),
+            )));
+            render_schema(lines, resolved, definitions, indent + 1, max_depth);
+            lines.push(Line::from(Span::styled(
+                format!("{pad}}}"),
+                Style::default().fg(Color::Magenta),
+            )));
+        } else {
+            let pad = " ".repeat(indent * 2);
+            lines.push(Line::from(Span::styled(
+                format!("{pad}$ref: {ref_path}"),
+                Style::default().fg(Color::Yellow),
+            )));
+        }
+        return;
+    }
+
+    // Handle array
+    if schema.schema_type.as_deref() == Some("array") {
+        if let Some(items) = &schema.items {
+            let pad = " ".repeat(indent * 2);
+            lines.push(Line::from(Span::styled(
+                format!("{pad}array ["),
+                Style::default().fg(Color::Cyan),
+            )));
+            render_schema(lines, items, definitions, indent + 1, max_depth);
+            lines.push(Line::from(Span::styled(
+                format!("{pad}]"),
+                Style::default().fg(Color::Cyan),
+            )));
+        }
+        return;
+    }
+
+    // Handle object with properties
+    if !schema.properties.is_empty() {
+        let pad = " ".repeat(indent * 2);
+        for (name, prop) in &schema.properties {
+            let type_str = prop_type_str(prop);
+            let req = if schema.required.contains(name) { "*" } else { "" };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{pad}{name}"), Style::default().fg(Color::White)),
+                Span::styled(format!("{req}"), Style::default().fg(Color::Red)),
+                Span::styled(format!(": {type_str}"), Style::default().fg(Color::Gray)),
+            ]));
+            // Recurse into nested objects/refs
+            if prop.reference.is_some()
+                || !prop.properties.is_empty()
+                || (prop.schema_type.as_deref() == Some("array") && prop.items.is_some())
+            {
+                render_schema(lines, prop, definitions, indent + 1, max_depth);
+            }
+        }
+        return;
+    }
+
+    // Simple type
+    let pad = " ".repeat(indent * 2);
+    let t = prop_type_str(schema);
+    if !t.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("{pad}{t}"),
+            Style::default().fg(Color::Gray),
+        )));
+    }
+}
+
+fn prop_type_str(schema: &Schema) -> String {
+    if let Some(ref_path) = &schema.reference {
+        return ref_path
+            .strip_prefix("#/definitions/")
+            .unwrap_or(ref_path)
+            .to_string();
+    }
+    let base = schema.schema_type.as_deref().unwrap_or("object");
+    if base == "array" {
+        if let Some(items) = &schema.items {
+            let inner = prop_type_str(items);
+            return format!("[{inner}]");
+        }
+        return "array".into();
+    }
+    if let Some(fmt) = &schema.format {
+        return format!("{base}({fmt})");
+    }
+    base.to_string()
 }

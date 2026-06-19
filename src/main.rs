@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
     loop {
-        terminal.draw(|f| ui::draw(f, &app))?;
+        terminal.draw(|f| ui::draw(f, &mut app))?;
 
         if let Event::Key(key) = event::read()? {
             if key.kind != KeyEventKind::Press {
@@ -74,6 +74,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             app.scroll_up();
                         }
                     }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        if app.active_panel == Panel::Sidebar {
+                            app.toggle_tag();
+                        }
+                    }
                     KeyCode::Tab => {
                         app.active_panel = match app.active_panel {
                             Panel::Sidebar => Panel::Detail,
@@ -86,6 +91,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             app.apply_filter();
                         }
                     }
+                    KeyCode::PageDown => app.page_down(),
+                    KeyCode::PageUp => app.page_up(),
                     _ => {}
                 }
             }
