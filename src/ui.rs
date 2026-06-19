@@ -298,7 +298,10 @@ fn render_schema(
 
     // Handle $ref
     if let Some(ref_path) = &schema.reference {
-        let ref_name = ref_path.strip_prefix("#/definitions/").unwrap_or(ref_path);
+        let ref_name = ref_path
+            .strip_prefix("#/definitions/")
+            .or_else(|| ref_path.strip_prefix("#/components/schemas/"))
+            .unwrap_or(ref_path);
         if let Some(resolved) = definitions.get(ref_name) {
             let pad = " ".repeat(indent * 2);
             lines.push(Line::from(Span::styled(
@@ -374,6 +377,7 @@ fn prop_type_str(schema: &Schema) -> String {
     if let Some(ref_path) = &schema.reference {
         return ref_path
             .strip_prefix("#/definitions/")
+            .or_else(|| ref_path.strip_prefix("#/components/schemas/"))
             .unwrap_or(ref_path)
             .to_string();
     }

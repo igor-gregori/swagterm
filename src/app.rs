@@ -1,4 +1,4 @@
-use crate::swagger::{Operation, SwaggerSpec};
+use crate::swagger::{ApiSpec, Operation};
 use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
@@ -22,7 +22,7 @@ pub enum SidebarItem {
 }
 
 pub struct App {
-    pub spec: SwaggerSpec,
+    pub spec: ApiSpec,
     pub endpoints: Vec<Endpoint>,
     pub filtered: Vec<usize>,
     pub sidebar_items: Vec<SidebarItem>,
@@ -39,7 +39,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(spec: SwaggerSpec) -> Self {
+    pub fn new(spec: ApiSpec) -> Self {
         let mut endpoints = Vec::new();
         for (path, methods) in &spec.paths {
             for (method, op) in methods {
