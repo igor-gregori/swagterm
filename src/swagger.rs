@@ -334,9 +334,34 @@ impl From<OpenApi3> for ApiSpec {
 
 // ─── Parser ─────────────────────────────────────────────────────────────────
 
+pub fn parse_source(source: &str) -> Result<ApiSpec, String> {
+    if source.starts_with("http://") || source.starts_with("https://") {
+        parse_url(source)
+    } else {
+        parse_file(Path::new(source))
+    }
+}
+
+fn parse_url(url: &str) -> Result<ApiSpec, String> {
+    let response = ureq::get(url)
+        .call()
+        .map_err(|e| format!("HTTP request failed: {e}"))?;
+    let content = response
+        .into_string()
+        .map_err(|e| format!("Failed to read response: {e}"))?;
+
+    // Guess format from URL or content
+    let ext = if url.ends_with(".yaml") || url.ends_with(".yml") {
+        "yaml"
+    } else {
+        "json"
+    };
+    parse_content(&content, ext)
+}
+
 pub fn parse_file(path: &Path) -> Result<ApiSpec, String> {
     let content = std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {e}"))?;
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("json");
     parse_content(&content, ext)
 }
 

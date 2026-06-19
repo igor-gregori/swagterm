@@ -2,7 +2,7 @@
 name = "swagterm"
 version = "0.1.0"
 edition = "2021"
-description = "Terminal Swagger 2.0 viewer"
+description = "Terminal Swagger/OpenAPI viewer"
 
 [dependencies]
 ratatui = "0.28"
@@ -12,3 +12,4 @@ serde_json = "1"
 serde_yaml = "0.9"
 clap = { version = "4", features = ["derive"] }
 indexmap = { version = "2", features = ["serde"] }
+ureq = "2"

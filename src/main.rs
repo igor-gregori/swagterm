@@ -11,18 +11,17 @@ use crossterm::{
 };
 use ratatui::prelude::*;
 use std::io::stdout;
-use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "swagterm", about = "Terminal Swagger 2.0 viewer")]
+#[command(name = "swagterm", about = "Terminal Swagger/OpenAPI viewer")]
 struct Cli {
-    /// Path to Swagger 2.0 spec file (JSON/YAML)
-    file: PathBuf,
+    /// Path or URL to Swagger/OpenAPI spec (JSON/YAML)
+    source: String,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let spec = swagger::parse_file(&cli.file)?;
+    let spec = swagger::parse_source(&cli.source)?;
     let mut app = App::new(spec);
 
     enable_raw_mode()?;

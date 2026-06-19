@@ -86,17 +86,18 @@ A TUI application that renders Swagger/OpenAPI specs interactively in the termin
 
 ## v2 Roadmap
 
-- OpenAPI 3.0 / 3.1 support
-- Load spec from URL
-- "Try it out" — build and execute requests
-- Auth configuration (API key, Bearer, OAuth)
-- Copy as curl to clipboard
-- Multiple specs (tabs)
-- Spec validation warnings
+- [x] OpenAPI 3.0 / 3.1 support
+- [x] Load spec from URL
+- [ ] "Try it out" — build and execute requests
+- [ ] Auth configuration (API key, Bearer, OAuth)
+- [ ] Copy as curl to clipboard
+- [ ] Multiple specs (tabs)
+- [ ] Spec validation warnings
 
 ## v3 Roadmap
 
-- README.md with screenshots/GIF demo
-- Homebrew formula / AUR package
-- Mouse support (click endpoints, scroll)
-- Syntax highlighting for JSON schema bodies
+- [ ] README.md with screenshots/GIF demo
+- [ ] Homebrew formula / AUR package
+- [ ] Mouse support (click endpoints, scroll)
+- [ ] Syntax highlighting for JSON schema bodies
+- [ ] Publish to crates.io + GitHub releases
