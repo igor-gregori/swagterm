@@ -21,6 +21,27 @@ pub enum SidebarItem {
     Endpoint(usize), // index into endpoints vec
 }
 
+#[derive(PartialEq)]
+pub enum AppMode {
+    Browse,
+    TryIt,
+}
+
+pub struct TryItState {
+    pub param_values: Vec<(String, String, String)>, // (name, location, value)
+    pub body: String,
+    pub selected_field: usize,
+    pub editing: bool,
+    pub response: Option<HttpResponse>,
+    pub error: Option<String>,
+}
+
+pub struct HttpResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: String,
+}
+
 pub struct App {
     pub spec: ApiSpec,
     pub endpoints: Vec<Endpoint>,
@@ -35,6 +56,8 @@ pub struct App {
     pub search: String,
     pub searching: bool,
     pub active_panel: Panel,
+    pub mode: AppMode,
+    pub try_it: Option<TryItState>,
     pub quit: bool,
 }
 
@@ -67,6 +90,8 @@ impl App {
             search: String::new(),
             searching: false,
             active_panel: Panel::Sidebar,
+            mode: AppMode::Browse,
+            try_it: None,
             quit: false,
         };
         app.rebuild_sidebar();
@@ -182,5 +207,127 @@ impl App {
     pub fn page_up(&mut self) {
         let step = self.detail_height.max(1);
         self.scroll = self.scroll.saturating_sub(step);
+    }
+
+    pub fn enter_try_it(&mut self) {
+        let Some(ep) = self.selected_endpoint() else { return };
+        let params: Vec<(String, String, String)> = ep
+            .operation
+            .parameters
+            .iter()
+            .filter(|p| p.location != "body")
+            .map(|p| (p.name.clone(), p.location.clone(), String::new()))
+            .collect();
+        let has_body = ep.operation.parameters.iter().any(|p| p.location == "body");
+        self.try_it = Some(TryItState {
+            param_values: params,
+            body: if has_body { "{}".into() } else { String::new() },
+            selected_field: 0,
+            editing: false,
+            response: None,
+            error: None,
+        });
+        self.mode = AppMode::TryIt;
+        self.scroll = 0;
+    }
+
+    pub fn exit_try_it(&mut self) {
+        self.mode = AppMode::Browse;
+        self.try_it = None;
+        self.scroll = 0;
+    }
+
+    pub fn execute_request(&mut self) {
+        let Some(ep) = self.selected_endpoint().cloned() else { return };
+        let Some(state) = &self.try_it else { return };
+
+        // Build URL with path params substituted
+        let mut path = ep.path.clone();
+        let mut query_params: Vec<(String, String)> = Vec::new();
+
+        for (name, location, value) in &state.param_values {
+            match location.as_str() {
+                "path" => {
+                    path = path.replace(&format!("{{{name}}}"), value);
+                }
+                "query" => {
+                    if !value.is_empty() {
+                        query_params.push((name.clone(), value.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut url = format!("{}{}", self.spec.base_url, path);
+        if !query_params.is_empty() {
+            let qs: Vec<String> = query_params.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            url = format!("{url}?{}", qs.join("&"));
+        }
+
+        let body = state.body.clone();
+        let method = ep.method.clone();
+
+        // Execute request
+        let result = Self::do_request(&method, &url, &body);
+        let state = self.try_it.as_mut().unwrap();
+        match result {
+            Ok(resp) => {
+                state.response = Some(resp);
+                state.error = None;
+            }
+            Err(e) => {
+                state.error = Some(e);
+                state.response = None;
+            }
+        }
+        self.scroll = 0;
+    }
+
+    fn do_request(method: &str, url: &str, body: &str) -> Result<HttpResponse, String> {
+        let request = match method {
+            "GET" => ureq::get(url),
+            "POST" => ureq::post(url),
+            "PUT" => ureq::put(url),
+            "DELETE" => ureq::delete(url),
+            "PATCH" => ureq::patch(url),
+            "HEAD" => ureq::head(url),
+            _ => return Err(format!("Unsupported method: {method}")),
+        };
+
+        let response = if matches!(method, "POST" | "PUT" | "PATCH") && !body.is_empty() {
+            request
+                .set("Content-Type", "application/json")
+                .send_string(body)
+        } else {
+            request.call()
+        };
+
+        match response {
+            Ok(resp) => {
+                let status = resp.status();
+                let headers: Vec<(String, String)> = resp
+                    .headers_names()
+                    .iter()
+                    .filter_map(|name| {
+                        resp.header(name).map(|v| (name.clone(), v.to_string()))
+                    })
+                    .collect();
+                let body = resp.into_string().unwrap_or_default();
+                Ok(HttpResponse { status, headers, body })
+            }
+            Err(ureq::Error::Status(code, resp)) => {
+                let headers: Vec<(String, String)> = resp
+                    .headers_names()
+                    .iter()
+                    .filter_map(|name| {
+                        resp.header(name).map(|v| (name.clone(), v.to_string()))
+                    })
+                    .collect();
+                let body = resp.into_string().unwrap_or_default();
+                Ok(HttpResponse { status: code, headers, body })
+            }
+            Err(e) => Err(format!("Request failed: {e}")),
+        }
     }
 }

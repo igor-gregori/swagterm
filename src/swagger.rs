@@ -8,6 +8,7 @@ use std::path::Path;
 #[derive(Debug)]
 pub struct ApiSpec {
     pub info: Info,
+    pub base_url: String,
     pub paths: IndexMap<String, IndexMap<String, Operation>>,
     pub definitions: HashMap<String, Schema>,
 }
@@ -75,6 +76,12 @@ pub struct Schema {
 struct Swagger2 {
     info: Info,
     #[serde(default)]
+    host: String,
+    #[serde(rename = "basePath", default)]
+    base_path: String,
+    #[serde(default)]
+    schemes: Vec<String>,
+    #[serde(default)]
     paths: IndexMap<String, IndexMap<String, Swagger2Operation>>,
     #[serde(default)]
     definitions: HashMap<String, Schema>,
@@ -129,9 +136,16 @@ struct Swagger2Response {
 struct OpenApi3 {
     info: Info,
     #[serde(default)]
+    servers: Vec<OpenApi3Server>,
+    #[serde(default)]
     paths: IndexMap<String, IndexMap<String, OpenApi3Operation>>,
     #[serde(default)]
     components: Option<OpenApi3Components>,
+}
+
+#[derive(Deserialize)]
+struct OpenApi3Server {
+    url: String,
 }
 
 #[derive(Deserialize)]
@@ -199,6 +213,13 @@ struct OpenApi3Response {
 
 impl From<Swagger2> for ApiSpec {
     fn from(s: Swagger2) -> Self {
+        let scheme = s.schemes.first().cloned().unwrap_or_else(|| "https".into());
+        let base_url = if s.host.is_empty() {
+            String::new()
+        } else {
+            format!("{}://{}{}", scheme, s.host, s.base_path)
+        };
+
         let paths = s
             .paths
             .into_iter()
@@ -241,12 +262,14 @@ impl From<Swagger2> for ApiSpec {
                 (path, ops)
             })
             .collect();
-        ApiSpec { info: s.info, paths, definitions: s.definitions }
+        ApiSpec { info: s.info, base_url, paths, definitions: s.definitions }
     }
 }
 
 impl From<OpenApi3> for ApiSpec {
     fn from(s: OpenApi3) -> Self {
+        let base_url = s.servers.first().map(|sv| sv.url.trim_end_matches('/').to_string()).unwrap_or_default();
+
         let definitions = s
             .components
             .map(|c| c.schemas)
@@ -328,7 +351,7 @@ impl From<OpenApi3> for ApiSpec {
                 (path, ops)
             })
             .collect();
-        ApiSpec { info: s.info, paths, definitions }
+        ApiSpec { info: s.info, base_url, paths, definitions }
     }
 }
 

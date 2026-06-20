@@ -1,4 +1,4 @@
-use crate::app::{App, Endpoint, Panel, SidebarItem};
+use crate::app::{App, AppMode, Endpoint, Panel, SidebarItem};
 use crate::swagger::Schema;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -41,12 +41,22 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .split(chunks[1]);
 
     draw_sidebar(f, app, main[0]);
-    draw_detail(f, app, main[1]);
+    match app.mode {
+        AppMode::Browse => draw_detail(f, app, main[1]),
+        AppMode::TryIt => draw_try_it(f, app, main[1]),
+    }
 
     let footer = if app.searching {
         format!(" Search: {}█", app.search)
+    } else if app.mode == AppMode::TryIt {
+        let editing = app.try_it.as_ref().map(|s| s.editing).unwrap_or(false);
+        if editing {
+            " Type value │ Enter/Esc:done".into()
+        } else {
+            " j/k:select │ Enter:edit │ s:send │ Esc:back │ PgUp/PgDn:scroll".into()
+        }
     } else {
-        " j/k:nav │ Tab:switch │ /:search │ Esc:clear │ q:quit │ ↑↓:scroll detail".into()
+        " j/k:nav │ Tab:switch │ /:search │ t:try it │ q:quit".into()
     };
     f.render_widget(
         Paragraph::new(footer).style(Style::default().fg(Color::DarkGray)),
@@ -278,6 +288,142 @@ fn add_responses_section(lines: &mut Vec<Line<'static>>, ep: &Endpoint, definiti
         }
     }
     lines.push(Line::from(""));
+}
+
+fn draw_try_it(f: &mut Frame, app: &mut App, area: Rect) {
+    let block = Block::default()
+        .title(" Try it out ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+
+    app.detail_height = area.height.saturating_sub(2);
+
+    let Some(ep) = app.selected_endpoint() else {
+        f.render_widget(Paragraph::new("No endpoint selected").block(block), area);
+        return;
+    };
+    let Some(state) = &app.try_it else {
+        f.render_widget(Paragraph::new("").block(block), area);
+        return;
+    };
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Header
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!(" {} ", ep.method),
+            Style::default().fg(Color::White).bg(method_color(&ep.method)).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!(" {}", ep.path), Style::default().add_modifier(Modifier::BOLD)),
+    ]));
+    lines.push(Line::from(Span::styled(
+        format!("→ {}{}", app.spec.base_url, ep.path),
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    // Parameters
+    if !state.param_values.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "Parameters",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            "─────────────────────────────────────────",
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        for (i, (name, location, value)) in state.param_values.iter().enumerate() {
+            let is_selected = i == state.selected_field;
+            let cursor = if is_selected && state.editing { "█" } else { "" };
+            let arrow = if is_selected { "▸ " } else { "  " };
+            let style = if is_selected {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{arrow}{name}"), style),
+                Span::styled(format!(" ({location}): "), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{value}{cursor}"), Style::default().fg(Color::White)),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
+
+    // Body field
+    let has_body = ep.operation.parameters.iter().any(|p| p.location == "body");
+    if has_body {
+        let body_idx = state.param_values.len();
+        let is_selected = state.selected_field == body_idx;
+        let cursor = if is_selected && state.editing { "█" } else { "" };
+        let arrow = if is_selected { "▸ " } else { "  " };
+        let style = if is_selected {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+
+        lines.push(Line::from(Span::styled(
+            "Request Body",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            "─────────────────────────────────────────",
+            Style::default().fg(Color::DarkGray),
+        )));
+        lines.push(Line::from(vec![
+            Span::styled(format!("{arrow}"), style),
+            Span::styled(format!("{}{cursor}", state.body), Style::default().fg(Color::White)),
+        ]));
+        lines.push(Line::from(""));
+    }
+
+    // Response
+    if let Some(resp) = &state.response {
+        let status_color = match resp.status {
+            200..=299 => Color::Green,
+            300..=399 => Color::Yellow,
+            _ => Color::Red,
+        };
+        lines.push(Line::from(Span::styled(
+            format!("Response — {}", resp.status),
+            Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            "─────────────────────────────────────────",
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        // Headers
+        for (k, v) in &resp.headers {
+            lines.push(Line::from(vec![
+                Span::styled(format!("{k}: "), Style::default().fg(Color::Yellow)),
+                Span::raw(v.clone()),
+            ]));
+        }
+        lines.push(Line::from(""));
+
+        // Body
+        lines.push(Line::from(Span::styled("Body", Style::default().fg(Color::Cyan))));
+        for line in resp.body.lines() {
+            lines.push(Line::from(Span::raw(line.to_string())));
+        }
+    }
+
+    if let Some(err) = &state.error {
+        lines.push(Line::from(Span::styled(
+            format!("Error: {err}"),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )));
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false })
+        .scroll((app.scroll, 0));
+    f.render_widget(paragraph, area);
 }
 
 fn render_schema(
