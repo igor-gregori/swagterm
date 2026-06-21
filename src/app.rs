@@ -1,5 +1,6 @@
 use crate::swagger::{ApiSpec, Operation};
 use std::collections::HashSet;
+use std::io::Read;
 
 #[derive(Debug, Clone)]
 pub struct Endpoint {
@@ -313,7 +314,13 @@ impl App {
                         resp.header(name).map(|v| (name.clone(), v.to_string()))
                     })
                     .collect();
-                let body = resp.into_string().unwrap_or_default();
+                let mut reader = resp.into_reader();
+                let mut body = String::new();
+                reader.read_to_string(&mut body).unwrap_or_default();
+                // Pretty-print JSON if possible
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    body = serde_json::to_string_pretty(&json).unwrap_or(body);
+                }
                 Ok(HttpResponse { status, headers, body })
             }
             Err(ureq::Error::Status(code, resp)) => {
@@ -324,7 +331,12 @@ impl App {
                         resp.header(name).map(|v| (name.clone(), v.to_string()))
                     })
                     .collect();
-                let body = resp.into_string().unwrap_or_default();
+                let mut reader = resp.into_reader();
+                let mut body = String::new();
+                reader.read_to_string(&mut body).unwrap_or_default();
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    body = serde_json::to_string_pretty(&json).unwrap_or(body);
+                }
                 Ok(HttpResponse { status: code, headers, body })
             }
             Err(e) => Err(format!("Request failed: {e}")),

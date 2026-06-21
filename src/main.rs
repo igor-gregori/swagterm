@@ -119,12 +119,48 @@ fn handle_try_it_keys(app: &mut App, code: KeyCode) {
                 return;
             }
         }
+        KeyCode::Char('j') | KeyCode::Down => {
+            let editing = app.try_it.as_ref().map(|s| s.editing).unwrap_or(false);
+            if !editing {
+                let has_response = app.try_it.as_ref().map(|s| s.response.is_some()).unwrap_or(false);
+                if has_response {
+                    app.scroll = app.scroll.saturating_add(1);
+                } else {
+                    let has_body = app.selected_endpoint()
+                        .map(|ep| ep.operation.parameters.iter().any(|p| p.location == "body"))
+                        .unwrap_or(false);
+                    if let Some(state) = app.try_it.as_mut() {
+                        let total_fields = state.param_values.len() + if has_body { 1 } else { 0 };
+                        if total_fields > 0 {
+                            state.selected_field = (state.selected_field + 1) % total_fields;
+                        }
+                    }
+                }
+                return;
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            let editing = app.try_it.as_ref().map(|s| s.editing).unwrap_or(false);
+            if !editing {
+                let has_response = app.try_it.as_ref().map(|s| s.response.is_some()).unwrap_or(false);
+                if has_response {
+                    app.scroll = app.scroll.saturating_sub(1);
+                } else {
+                    let has_body = app.selected_endpoint()
+                        .map(|ep| ep.operation.parameters.iter().any(|p| p.location == "body"))
+                        .unwrap_or(false);
+                    if let Some(state) = app.try_it.as_mut() {
+                        let total_fields = state.param_values.len() + if has_body { 1 } else { 0 };
+                        if total_fields > 0 {
+                            state.selected_field = state.selected_field.checked_sub(1).unwrap_or(total_fields - 1);
+                        }
+                    }
+                }
+                return;
+            }
+        }
         _ => {}
     }
-
-    let has_body = app.selected_endpoint()
-        .map(|ep| ep.operation.parameters.iter().any(|p| p.location == "body"))
-        .unwrap_or(false);
 
     let Some(state) = app.try_it.as_mut() else { return };
 
@@ -152,20 +188,8 @@ fn handle_try_it_keys(app: &mut App, code: KeyCode) {
         return;
     }
 
-    let total_fields = state.param_values.len() + if has_body { 1 } else { 0 };
-
     match code {
         KeyCode::Enter => state.editing = true,
-        KeyCode::Char('j') | KeyCode::Down => {
-            if total_fields > 0 {
-                state.selected_field = (state.selected_field + 1) % total_fields;
-            }
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            if total_fields > 0 {
-                state.selected_field = state.selected_field.checked_sub(1).unwrap_or(total_fields - 1);
-            }
-        }
         _ => {}
     }
 }

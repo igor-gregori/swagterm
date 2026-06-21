@@ -42,6 +42,7 @@ pub struct Parameter {
     pub required: bool,
     pub param_type: Option<String>,
     pub schema: Option<Schema>,
+    pub enum_values: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +69,8 @@ pub struct Schema {
     pub required: Vec<String>,
     #[serde(default)]
     pub format: Option<String>,
+    #[serde(default)]
+    pub example: Option<serde_json::Value>,
 }
 
 // ─── Swagger 2.0 raw model ──────────────────────────────────────────────────
@@ -120,6 +123,10 @@ struct Swagger2Parameter {
     param_type: Option<String>,
     #[serde(default)]
     schema: Option<Schema>,
+    #[serde(rename = "enum", default)]
+    enum_values: Vec<serde_json::Value>,
+    #[serde(default)]
+    items: Option<Schema>,
 }
 
 #[derive(Deserialize)]
@@ -237,13 +244,23 @@ impl From<Swagger2> for ApiSpec {
                                 parameters: op
                                     .parameters
                                     .into_iter()
-                                    .map(|p| Parameter {
-                                        name: p.name,
-                                        location: p.location,
-                                        description: p.description,
-                                        required: p.required,
-                                        param_type: p.param_type,
-                                        schema: p.schema,
+                                    .map(|p| {
+                                        let enum_values = if !p.enum_values.is_empty() {
+                                            p.enum_values.iter().map(|v| v.to_string().trim_matches('"').to_string()).collect()
+                                        } else if let Some(items) = &p.items {
+                                            items.enum_values.iter().map(|v| v.to_string().trim_matches('"').to_string()).collect()
+                                        } else {
+                                            Vec::new()
+                                        };
+                                        Parameter {
+                                            name: p.name,
+                                            location: p.location,
+                                            description: p.description,
+                                            required: p.required,
+                                            param_type: p.param_type,
+                                            schema: p.schema,
+                                            enum_values,
+                                        }
                                     })
                                     .collect(),
                                 responses: op
@@ -285,13 +302,19 @@ impl From<OpenApi3> for ApiSpec {
                         let mut parameters: Vec<Parameter> = op
                             .parameters
                             .into_iter()
-                            .map(|p| Parameter {
-                                name: p.name,
-                                location: p.location,
-                                description: p.description,
-                                required: p.required,
-                                param_type: p.schema.as_ref().and_then(|s| s.schema_type.clone()),
-                                schema: p.schema,
+                            .map(|p| {
+                                let enum_values = p.schema.as_ref()
+                                    .map(|s| s.enum_values.iter().map(|v| v.to_string().trim_matches('"').to_string()).collect())
+                                    .unwrap_or_default();
+                                Parameter {
+                                    name: p.name,
+                                    location: p.location,
+                                    description: p.description,
+                                    required: p.required,
+                                    param_type: p.schema.as_ref().and_then(|s| s.schema_type.clone()),
+                                    schema: p.schema,
+                                    enum_values,
+                                }
                             })
                             .collect();
 
@@ -313,6 +336,7 @@ impl From<OpenApi3> for ApiSpec {
                                 required: rb.required,
                                 param_type: None,
                                 schema,
+                                enum_values: Vec::new(),
                             });
                         }
 

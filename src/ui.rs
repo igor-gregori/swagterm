@@ -53,7 +53,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         if editing {
             " Type value │ Enter/Esc:done".into()
         } else {
-            " j/k:select │ Enter:edit │ s:send │ Esc:back │ PgUp/PgDn:scroll".into()
+            " j/k:select │ Enter:edit │ s:send │ Esc:back".into()
         }
     } else {
         " j/k:nav │ Tab:switch │ /:search │ t:try it │ q:quit".into()
@@ -246,6 +246,12 @@ fn add_parameters_section(lines: &mut Vec<Line<'static>>, ep: &Endpoint, definit
                 Style::default().fg(Color::DarkGray),
             )));
         }
+        if !p.enum_values.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("  Available values: {}", p.enum_values.join(", ")),
+                Style::default().fg(Color::Magenta),
+            )));
+        }
         // Show schema for body parameters
         if p.location == "body" {
             if let Some(schema) = &p.schema {
@@ -284,7 +290,17 @@ fn add_responses_section(lines: &mut Vec<Line<'static>>, ep: &Endpoint, definiti
             Span::raw(desc),
         ]));
         if let Some(schema) = &resp.schema {
-            render_schema(lines, schema, definitions, 2, 4);
+            lines.push(Line::from(Span::styled(
+                "    Example:",
+                Style::default().fg(Color::DarkGray),
+            )));
+            let example = generate_example(schema, definitions, 0, 6);
+            for line in example.lines() {
+                lines.push(Line::from(Span::styled(
+                    format!("      {line}"),
+                    Style::default().fg(Color::Green),
+                )));
+            }
         }
     }
     lines.push(Line::from(""));
@@ -348,6 +364,15 @@ fn draw_try_it(f: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(format!(" ({location}): "), Style::default().fg(Color::DarkGray)),
                 Span::styled(format!("{value}{cursor}"), Style::default().fg(Color::White)),
             ]));
+            // Show available values if parameter has enum
+            if let Some(param) = ep.operation.parameters.iter().find(|p| p.name == *name) {
+                if !param.enum_values.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        format!("    Available values: {}", param.enum_values.join(", ")),
+                        Style::default().fg(Color::Magenta),
+                    )));
+                }
+            }
         }
         lines.push(Line::from(""));
     }
@@ -539,4 +564,78 @@ fn prop_type_str(schema: &Schema) -> String {
         return format!("{base}({fmt})");
     }
     base.to_string()
+}
+
+fn generate_example(
+    schema: &Schema,
+    definitions: &HashMap<String, Schema>,
+    depth: usize,
+    max_depth: usize,
+) -> String {
+    let value = build_example_value(schema, definitions, depth, max_depth);
+    serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into())
+}
+
+fn build_example_value(
+    schema: &Schema,
+    definitions: &HashMap<String, Schema>,
+    depth: usize,
+    max_depth: usize,
+) -> serde_json::Value {
+    if depth > max_depth {
+        return serde_json::Value::Object(Default::default());
+    }
+
+    // Use explicit example if present
+    if let Some(example) = &schema.example {
+        return example.clone();
+    }
+
+    // Handle $ref
+    if let Some(ref_path) = &schema.reference {
+        let ref_name = ref_path
+            .strip_prefix("#/definitions/")
+            .or_else(|| ref_path.strip_prefix("#/components/schemas/"))
+            .unwrap_or(ref_path);
+        if let Some(resolved) = definitions.get(ref_name) {
+            return build_example_value(resolved, definitions, depth, max_depth);
+        }
+        return serde_json::Value::String(format!("<{ref_name}>"));
+    }
+
+    // Handle array
+    if schema.schema_type.as_deref() == Some("array") {
+        if let Some(items) = &schema.items {
+            let item = build_example_value(items, definitions, depth + 1, max_depth);
+            return serde_json::Value::Array(vec![item]);
+        }
+        return serde_json::Value::Array(vec![]);
+    }
+
+    // Handle object with properties
+    if !schema.properties.is_empty() {
+        let mut map = serde_json::Map::new();
+        for (name, prop) in &schema.properties {
+            map.insert(name.clone(), build_example_value(prop, definitions, depth + 1, max_depth));
+        }
+        return serde_json::Value::Object(map);
+    }
+
+    // Simple types
+    match schema.schema_type.as_deref() {
+        Some("string") => {
+            if !schema.enum_values.is_empty() {
+                schema.enum_values[0].clone()
+            } else if schema.format.as_deref() == Some("date-time") {
+                serde_json::Value::String("2024-01-01T00:00:00Z".into())
+            } else if schema.format.as_deref() == Some("date") {
+                serde_json::Value::String("2024-01-01".into())
+            } else {
+                serde_json::Value::String("string".into())
+            }
+        }
+        Some("integer") | Some("number") => serde_json::json!(0),
+        Some("boolean") => serde_json::json!(true),
+        _ => serde_json::Value::Object(Default::default()),
+    }
 }
