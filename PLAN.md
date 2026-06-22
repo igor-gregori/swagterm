@@ -88,7 +88,7 @@ A TUI application that renders Swagger/OpenAPI specs interactively in the termin
 
 - [x] OpenAPI 3.0 / 3.1 support
 - [x] Load spec from URL
-- [ ] "Try it out" — build and execute requests
+- [x] "Try it out" — build and execute requests
 - [ ] Auth configuration (API key, Bearer, OAuth)
 - [ ] Copy as curl to clipboard
 - [ ] Multiple specs (tabs)
