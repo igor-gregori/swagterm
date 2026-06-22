@@ -46,22 +46,34 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         AppMode::TryIt => draw_try_it(f, app, main[1]),
     }
 
-    let footer = if app.searching {
+    // Clear expired status messages (after 2 seconds)
+    if let Some((_, time)) = &app.status_message {
+        if time.elapsed() > std::time::Duration::from_secs(2) {
+            app.status_message = None;
+        }
+    }
+
+    let footer = if let Some((msg, _)) = &app.status_message {
+        msg.clone()
+    } else if app.searching {
         format!(" Search: {}█", app.search)
     } else if app.mode == AppMode::TryIt {
         let editing = app.try_it.as_ref().map(|s| s.editing).unwrap_or(false);
         if editing {
             " Type value │ Enter/Esc:done".into()
         } else {
-            " j/k:select │ Enter:edit │ s:send │ Esc:back".into()
+            " j/k:select │ Enter:edit │ s:send │ c:curl │ Esc:back".into()
         }
     } else {
         " j/k:nav │ Tab:switch │ /:search │ t:try it │ q:quit".into()
     };
-    f.render_widget(
-        Paragraph::new(footer).style(Style::default().fg(Color::DarkGray)),
-        chunks[2],
-    );
+
+    let footer_style = if app.status_message.is_some() {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    f.render_widget(Paragraph::new(footer).style(footer_style), chunks[2]);
 }
 
 fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {

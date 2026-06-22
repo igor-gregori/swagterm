@@ -122,6 +122,13 @@ fn handle_try_it_keys(app: &mut App, code: KeyCode) {
                 return;
             }
         }
+        KeyCode::Char('c') => {
+            let editing = app.try_it.as_ref().map(|s| s.editing).unwrap_or(false);
+            if !editing {
+                app.copy_as_curl();
+                return;
+            }
+        }
         KeyCode::Char('j') | KeyCode::Down => {
             let editing = app.try_it.as_ref().map(|s| s.editing).unwrap_or(false);
             if !editing {

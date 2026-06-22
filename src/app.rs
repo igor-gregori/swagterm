@@ -61,6 +61,7 @@ pub struct App {
     pub mode: AppMode,
     pub try_it: Option<TryItState>,
     pub response_rx: Option<std::sync::mpsc::Receiver<Result<HttpResponse, String>>>,
+    pub status_message: Option<(String, std::time::Instant)>,
     pub quit: bool,
 }
 
@@ -96,6 +97,7 @@ impl App {
             mode: AppMode::Browse,
             try_it: None,
             response_rx: None,
+            status_message: None,
             quit: false,
         };
         app.rebuild_sidebar();
@@ -353,6 +355,55 @@ impl App {
                 Ok(HttpResponse { status: code, headers, body })
             }
             Err(e) => Err(format!("Request failed: {e}")),
+        }
+    }
+
+    pub fn copy_as_curl(&mut self) {
+        let Some(ep) = self.selected_endpoint().cloned() else { return };
+        let state = match &self.try_it {
+            Some(s) => s,
+            None => {
+                // Build curl from endpoint without param values
+                let url = format!("{}{}", self.spec.base_url, ep.path);
+                let curl = if ep.method == "GET" {
+                    format!("curl '{url}'")
+                } else {
+                    format!("curl -X {} '{url}'", ep.method)
+                };
+                self.set_clipboard(&curl);
+                return;
+            }
+        };
+
+        let mut path = ep.path.clone();
+        let mut query_params: Vec<(String, String)> = Vec::new();
+
+        for (name, location, value) in &state.param_values {
+            match location.as_str() {
+                "path" => { path = path.replace(&format!("{{{name}}}"), value); }
+                "query" => { if !value.is_empty() { query_params.push((name.clone(), value.clone())); } }
+                _ => {}
+            }
+        }
+
+        let mut url = format!("{}{}", self.spec.base_url, path);
+        if !query_params.is_empty() {
+            let qs: Vec<String> = query_params.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            url = format!("{url}?{}", qs.join("&"));
+        }
+
+        let mut curl = format!("curl -X {} '{url}'", ep.method);
+        if matches!(ep.method.as_str(), "POST" | "PUT" | "PATCH") && !state.body.is_empty() {
+            curl.push_str(&format!(" -H 'Content-Type: application/json' -d '{}'", state.body));
+        }
+
+        self.set_clipboard(&curl);
+    }
+
+    fn set_clipboard(&mut self, text: &str) {
+        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text.to_string())) {
+            Ok(_) => self.status_message = Some(("Copied to clipboard!".into(), std::time::Instant::now())),
+            Err(e) => self.status_message = Some((format!("Clipboard error: {e}"), std::time::Instant::now())),
         }
     }
 }
