@@ -90,7 +90,7 @@ A TUI application that renders Swagger/OpenAPI specs interactively in the termin
 - [x] Load spec from URL
 - [x] "Try it out" — build and execute requests
 - [ ] Auth configuration (API key, Bearer, OAuth)
-- [ ] Copy as curl to clipboard
+- [x] Copy as curl to clipboard
 - [ ] Multiple specs (tabs)
 - [ ] Spec validation warnings
 
