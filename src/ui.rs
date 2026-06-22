@@ -405,6 +405,19 @@ fn draw_try_it(f: &mut Frame, app: &mut App, area: Rect) {
         lines.push(Line::from(""));
     }
 
+    // Loading
+    if state.loading {
+        let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let idx = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_millis() / 100) as usize % frames.len();
+        lines.push(Line::from(Span::styled(
+            format!("{} Sending request...", frames[idx]),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )));
+    }
+
     // Response
     if let Some(resp) = &state.response {
         let status_color = match resp.status {

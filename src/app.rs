@@ -33,6 +33,7 @@ pub struct TryItState {
     pub body: String,
     pub selected_field: usize,
     pub editing: bool,
+    pub loading: bool,
     pub response: Option<HttpResponse>,
     pub error: Option<String>,
 }
@@ -59,6 +60,7 @@ pub struct App {
     pub active_panel: Panel,
     pub mode: AppMode,
     pub try_it: Option<TryItState>,
+    pub response_rx: Option<std::sync::mpsc::Receiver<Result<HttpResponse, String>>>,
     pub quit: bool,
 }
 
@@ -93,6 +95,7 @@ impl App {
             active_panel: Panel::Sidebar,
             mode: AppMode::Browse,
             try_it: None,
+            response_rx: None,
             quit: false,
         };
         app.rebuild_sidebar();
@@ -225,6 +228,7 @@ impl App {
             body: if has_body { "{}".into() } else { String::new() },
             selected_field: 0,
             editing: false,
+            loading: false,
             response: None,
             error: None,
         });
@@ -242,20 +246,13 @@ impl App {
         let Some(ep) = self.selected_endpoint().cloned() else { return };
         let Some(state) = &self.try_it else { return };
 
-        // Build URL with path params substituted
         let mut path = ep.path.clone();
         let mut query_params: Vec<(String, String)> = Vec::new();
 
         for (name, location, value) in &state.param_values {
             match location.as_str() {
-                "path" => {
-                    path = path.replace(&format!("{{{name}}}"), value);
-                }
-                "query" => {
-                    if !value.is_empty() {
-                        query_params.push((name.clone(), value.clone()));
-                    }
-                }
+                "path" => { path = path.replace(&format!("{{{name}}}"), value); }
+                "query" => { if !value.is_empty() { query_params.push((name.clone(), value.clone())); } }
                 _ => {}
             }
         }
@@ -269,20 +266,36 @@ impl App {
         let body = state.body.clone();
         let method = ep.method.clone();
 
-        // Execute request
-        let result = Self::do_request(&method, &url, &body);
-        let state = self.try_it.as_mut().unwrap();
-        match result {
-            Ok(resp) => {
-                state.response = Some(resp);
-                state.error = None;
-            }
-            Err(e) => {
-                state.error = Some(e);
-                state.response = None;
+        // Set loading state
+        if let Some(s) = self.try_it.as_mut() {
+            s.loading = true;
+            s.response = None;
+            s.error = None;
+        }
+
+        // Spawn request in background thread
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.response_rx = Some(rx);
+        std::thread::spawn(move || {
+            let result = Self::do_request(&method, &url, &body);
+            let _ = tx.send(result);
+        });
+    }
+
+    pub fn poll_response(&mut self) {
+        if let Some(rx) = &self.response_rx {
+            if let Ok(result) = rx.try_recv() {
+                if let Some(state) = self.try_it.as_mut() {
+                    state.loading = false;
+                    match result {
+                        Ok(resp) => { state.response = Some(resp); state.error = None; }
+                        Err(e) => { state.error = Some(e); state.response = None; }
+                    }
+                }
+                self.response_rx = None;
+                self.scroll = 0;
             }
         }
-        self.scroll = 0;
     }
 
     fn do_request(method: &str, url: &str, body: &str) -> Result<HttpResponse, String> {

@@ -29,19 +29,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
     loop {
+        app.poll_response();
         terminal.draw(|f| ui::draw(f, &mut app))?;
 
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-            match app.mode {
-                AppMode::TryIt => handle_try_it_keys(&mut app, key.code),
-                AppMode::Browse => {
-                    if app.searching {
-                        handle_search_keys(&mut app, key.code);
-                    } else {
-                        handle_browse_keys(&mut app, key.code);
+        if event::poll(std::time::Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                match app.mode {
+                    AppMode::TryIt => handle_try_it_keys(&mut app, key.code),
+                    AppMode::Browse => {
+                        if app.searching {
+                            handle_search_keys(&mut app, key.code);
+                        } else {
+                            handle_browse_keys(&mut app, key.code);
+                        }
                     }
                 }
             }
