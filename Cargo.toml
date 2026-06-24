@@ -14,3 +14,4 @@ clap = { version = "4", features = ["derive"] }
 indexmap = { version = "2", features = ["serde"] }
 ureq = "2"
 arboard = "3"
+base64 = "0.22"

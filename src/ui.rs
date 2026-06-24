@@ -44,6 +44,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     match app.mode {
         AppMode::Browse => draw_detail(f, app, main[1]),
         AppMode::TryIt => draw_try_it(f, app, main[1]),
+        AppMode::AuthEdit => draw_auth(f, app, main[1]),
     }
 
     // Clear expired status messages (after 2 seconds)
@@ -64,8 +65,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         } else {
             " j/k:select │ Enter:edit │ s:send │ c:curl │ Esc:back".into()
         }
+    } else if app.mode == AppMode::AuthEdit {
+        if app.auth_editing {
+            " Type value │ Enter:apply │ Esc:cancel".into()
+        } else {
+            " j/k:select │ Enter:choose │ Esc:back".into()
+        }
     } else {
-        " j/k:nav │ Tab:switch │ /:search │ t:try it │ q:quit".into()
+        " j/k:nav │ Tab:switch │ /:search │ t:try it │ a:auth │ q:quit".into()
     };
 
     let footer_style = if app.status_message.is_some() {
@@ -318,6 +325,63 @@ fn add_responses_section(lines: &mut Vec<Line<'static>>, ep: &Endpoint, definiti
     lines.push(Line::from(""));
 }
 
+fn draw_auth(f: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title(" Auth Configuration ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let options = ["None", "Bearer Token", "API Key", "Basic Auth"];
+    let hints = ["", "Enter token value", "Format: HEADER_NAME=VALUE", "Format: username:password"];
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Current auth display
+    let current = match &app.auth {
+        crate::app::AuthConfig::None => "None".into(),
+        crate::app::AuthConfig::Bearer(_) => "Bearer ****".into(),
+        crate::app::AuthConfig::ApiKey { header, .. } => format!("API Key ({header})"),
+        crate::app::AuthConfig::Basic { username, .. } => format!("Basic ({username}:****)"),
+        crate::app::AuthConfig::Custom(h) => format!("Custom ({} headers)", h.len()),
+    };
+    lines.push(Line::from(vec![
+        Span::styled("Current: ", Style::default().fg(Color::Cyan)),
+        Span::styled(current, Style::default().fg(Color::White)),
+    ]));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Select auth type:",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    for (i, opt) in options.iter().enumerate() {
+        let is_selected = i == app.auth_selected;
+        let arrow = if is_selected { "▸ " } else { "  " };
+        let style = if is_selected {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(format!("{arrow}{opt}"), style)));
+    }
+
+    if app.auth_editing {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            hints[app.auth_selected],
+            Style::default().fg(Color::DarkGray),
+        )));
+        lines.push(Line::from(vec![
+            Span::styled("> ", Style::default().fg(Color::Yellow)),
+            Span::styled(format!("{}█", app.auth_input), Style::default().fg(Color::White)),
+        ]));
+    }
+
+    let paragraph = Paragraph::new(lines).block(block);
+    f.render_widget(paragraph, area);
+}
+
 fn draw_try_it(f: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::default()
         .title(" Try it out ")
@@ -349,6 +413,21 @@ fn draw_try_it(f: &mut Frame, app: &mut App, area: Rect) {
         format!("→ {}{}", app.spec.base_url, ep.path),
         Style::default().fg(Color::DarkGray),
     )));
+    match &app.auth {
+        crate::app::AuthConfig::None => {}
+        crate::app::AuthConfig::Bearer(_) => {
+            lines.push(Line::from(Span::styled("  🔒 Bearer", Style::default().fg(Color::Magenta))));
+        }
+        crate::app::AuthConfig::ApiKey { header, .. } => {
+            lines.push(Line::from(Span::styled(format!("  🔒 API Key ({header})"), Style::default().fg(Color::Magenta))));
+        }
+        crate::app::AuthConfig::Basic { username, .. } => {
+            lines.push(Line::from(Span::styled(format!("  🔒 Basic ({username})"), Style::default().fg(Color::Magenta))));
+        }
+        crate::app::AuthConfig::Custom(h) => {
+            lines.push(Line::from(Span::styled(format!("  🔒 Custom ({} headers)", h.len()), Style::default().fg(Color::Magenta))));
+        }
+    }
     lines.push(Line::from(""));
 
     // Parameters

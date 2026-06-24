@@ -26,6 +26,16 @@ pub enum SidebarItem {
 pub enum AppMode {
     Browse,
     TryIt,
+    AuthEdit,
+}
+
+#[derive(Debug, Clone)]
+pub enum AuthConfig {
+    None,
+    Bearer(String),
+    ApiKey { header: String, value: String },
+    Basic { username: String, password: String },
+    Custom(Vec<(String, String)>),
 }
 
 pub struct TryItState {
@@ -60,6 +70,10 @@ pub struct App {
     pub active_panel: Panel,
     pub mode: AppMode,
     pub try_it: Option<TryItState>,
+    pub auth: AuthConfig,
+    pub auth_input: String,
+    pub auth_selected: usize,
+    pub auth_editing: bool,
     pub response_rx: Option<std::sync::mpsc::Receiver<Result<HttpResponse, String>>>,
     pub status_message: Option<(String, std::time::Instant)>,
     pub quit: bool,
@@ -96,6 +110,10 @@ impl App {
             active_panel: Panel::Sidebar,
             mode: AppMode::Browse,
             try_it: None,
+            auth: AuthConfig::None,
+            auth_input: String::new(),
+            auth_selected: 0,
+            auth_editing: false,
             response_rx: None,
             status_message: None,
             quit: false,
@@ -278,8 +296,9 @@ impl App {
         // Spawn request in background thread
         let (tx, rx) = std::sync::mpsc::channel();
         self.response_rx = Some(rx);
+        let auth_headers = self.auth_headers();
         std::thread::spawn(move || {
-            let result = Self::do_request(&method, &url, &body);
+            let result = Self::do_request(&method, &url, &body, &auth_headers);
             let _ = tx.send(result);
         });
     }
@@ -300,8 +319,8 @@ impl App {
         }
     }
 
-    fn do_request(method: &str, url: &str, body: &str) -> Result<HttpResponse, String> {
-        let request = match method {
+    fn do_request(method: &str, url: &str, body: &str, auth_headers: &[(String, String)]) -> Result<HttpResponse, String> {
+        let mut request = match method {
             "GET" => ureq::get(url),
             "POST" => ureq::post(url),
             "PUT" => ureq::put(url),
@@ -310,6 +329,10 @@ impl App {
             "HEAD" => ureq::head(url),
             _ => return Err(format!("Unsupported method: {method}")),
         };
+
+        for (key, value) in auth_headers {
+            request = request.set(key, value);
+        }
 
         let response = if matches!(method, "POST" | "PUT" | "PATCH") && !body.is_empty() {
             request
@@ -358,6 +381,20 @@ impl App {
         }
     }
 
+    pub fn auth_headers(&self) -> Vec<(String, String)> {
+        match &self.auth {
+            AuthConfig::None => vec![],
+            AuthConfig::Bearer(token) => vec![("Authorization".into(), format!("Bearer {token}"))],
+            AuthConfig::ApiKey { header, value } => vec![(header.clone(), value.clone())],
+            AuthConfig::Basic { username, password } => {
+                use base64::Engine;
+                let encoded = base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
+                vec![("Authorization".into(), format!("Basic {encoded}"))]
+            }
+            AuthConfig::Custom(headers) => headers.clone(),
+        }
+    }
+
     pub fn copy_as_curl(&mut self) {
         let Some(ep) = self.selected_endpoint().cloned() else { return };
         let state = match &self.try_it {
@@ -393,6 +430,9 @@ impl App {
         }
 
         let mut curl = format!("curl -X {} '{url}'", ep.method);
+        for (key, value) in self.auth_headers() {
+            curl.push_str(&format!(" -H '{key}: {value}'"));
+        }
         if matches!(ep.method.as_str(), "POST" | "PUT" | "PATCH") && !state.body.is_empty() {
             curl.push_str(&format!(" -H 'Content-Type: application/json' -d '{}'", state.body));
         }
