@@ -76,6 +76,8 @@ pub struct App {
     pub auth_editing: bool,
     pub response_rx: Option<std::sync::mpsc::Receiver<Result<HttpResponse, String>>>,
     pub status_message: Option<(String, std::time::Instant)>,
+    pub warnings: Vec<crate::validate::Warning>,
+    pub show_warnings: bool,
     pub quit: bool,
 }
 
@@ -116,6 +118,8 @@ impl App {
             auth_editing: false,
             response_rx: None,
             status_message: None,
+            warnings: Vec::new(),
+            show_warnings: false,
             quit: false,
         };
         app.rebuild_sidebar();

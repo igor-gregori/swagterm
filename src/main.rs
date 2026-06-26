@@ -1,6 +1,7 @@
 mod app;
 mod swagger;
 mod ui;
+mod validate;
 
 use app::{App, AppMode, Panel};
 use clap::Parser;
@@ -39,6 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let spec = swagger::parse_source(&cli.source)?;
     let mut app = App::new(spec);
+    app.warnings = validate::validate(&app.spec);
 
     // Apply auth from CLI flags
     if let Some(token) = cli.bearer {
@@ -117,6 +119,7 @@ fn handle_browse_keys(app: &mut App, code: KeyCode) {
         KeyCode::Char('/') => app.searching = true,
         KeyCode::Char('t') => app.enter_try_it(),
         KeyCode::Char('a') => { app.mode = AppMode::AuthEdit; app.auth_selected = 0; app.auth_editing = false; }
+        KeyCode::Char('w') => { app.show_warnings = !app.show_warnings; app.scroll = 0; }
         KeyCode::Char('j') | KeyCode::Down => {
             if app.active_panel == Panel::Sidebar { app.next(); } else { app.scroll_down(); }
         }

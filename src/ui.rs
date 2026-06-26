@@ -26,9 +26,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .constraints([Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)])
         .split(f.area());
 
+    let warn_badge = if app.warnings.is_empty() {
+        String::new()
+    } else {
+        format!(" ⚠ {}", app.warnings.len())
+    };
     let title = format!(
-        " SwagTerm — {} v{}",
-        app.spec.info.title, app.spec.info.version
+        " SwagTerm — {} v{}{}",
+        app.spec.info.title, app.spec.info.version, warn_badge
     );
     f.render_widget(
         Paragraph::new(title).style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
@@ -42,7 +47,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     draw_sidebar(f, app, main[0]);
     match app.mode {
-        AppMode::Browse => draw_detail(f, app, main[1]),
+        AppMode::Browse => {
+            if app.show_warnings {
+                draw_warnings(f, app, main[1]);
+            } else {
+                draw_detail(f, app, main[1]);
+            }
+        }
         AppMode::TryIt => draw_try_it(f, app, main[1]),
         AppMode::AuthEdit => draw_auth(f, app, main[1]),
     }
@@ -72,7 +83,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             " j/k:select │ Enter:choose │ Esc:back".into()
         }
     } else {
-        " j/k:nav │ Tab:switch │ /:search │ t:try it │ a:auth │ q:quit".into()
+        " j/k:nav │ Tab:switch │ /:search │ t:try it │ a:auth │ w:warnings │ q:quit".into()
     };
 
     let footer_style = if app.status_message.is_some() {
@@ -323,6 +334,40 @@ fn add_responses_section(lines: &mut Vec<Line<'static>>, ep: &Endpoint, definiti
         }
     }
     lines.push(Line::from(""));
+}
+
+fn draw_warnings(f: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title(format!(" Warnings ({}) ", app.warnings.len()))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    if app.warnings.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  ✓ No issues found",
+            Style::default().fg(Color::Green),
+        )));
+    } else {
+        for w in &app.warnings {
+            lines.push(Line::from(vec![
+                Span::styled("⚠ ", Style::default().fg(Color::Yellow)),
+                Span::styled(w.path.clone(), Style::default().fg(Color::Cyan)),
+            ]));
+            lines.push(Line::from(Span::styled(
+                format!("  {}", w.message),
+                Style::default().fg(Color::White),
+            )));
+            lines.push(Line::from(""));
+        }
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false })
+        .scroll((app.scroll, 0));
+    f.render_widget(paragraph, area);
 }
 
 fn draw_auth(f: &mut Frame, app: &App, area: Rect) {
